@@ -71,6 +71,8 @@ Test actuals are passed only to metric computation after the complete forecast h
 
 The 12 test-window start dates are: 2025-02-05, 2025-02-25, 2025-03-10, 2025-03-22, 2025-03-27, 2025-04-06, 2025-05-06, 2025-06-05, 2025-07-05, 2025-08-04, 2025-09-03, and 2025-12-22. Each test window contains the next 10 daily observations.
 
+The notebook downloads and imports the official course `common/backtest.py` at runtime, and its `seasonal_naive_forecast` function generates every baseline forecast. The walk-forward loop itself deliberately retains explicit origins as a justified equivalent to the official harness: the course split helpers place uniformly spaced folds at the end of a series, while this design requires fixed, auditable windows before, across, and after the break. The explicit loop enforces the same core harness contract—fresh training-only fits, chronological non-overlapping train/test boundaries, and fixed horizons—while also asserting that both window strategies receive identical test dates and actuals.
+
 The same test dates are used for both strategies:
 
 - **Expanding:** training always starts 2024-01-01 and ends immediately before the test. It retains long-run evidence and increases effective sample size, which favors parameter stability.
@@ -89,6 +91,8 @@ For a fold of size \(H=10\):
 
 Critically, \(Q\) is recomputed using only the current fold's training window—never the full series or test. MASE below 1 means the forecast beats the in-sample weekly-naive scale, not necessarily the out-of-sample baseline on every fold. Results are reported per fold, as mean and standard deviation by strategy/model, and as mean by break regime.
 
+All six scoring operations are imported from the official course `common/metrics.py` downloaded into a temporary runtime directory: `mae`, `rmse`, `mase`, `wape`, `coverage`, and `interval_width`. The call to `mase` receives the current fold's `train` series explicitly with `seasonal_period=7`; no full-series or test observations enter its denominator.
+
 ## 8. Probabilistic intervals
 
 LightGBM uses sequential symmetric split-conformal intervals at nominal 80% coverage. Before fold \(j>1\), calibration scores are absolute residuals pooled from completed folds \(1,\ldots,j-1\) for the same window strategy. Current-fold outcomes never calibrate their own interval. With \(n\) prior scores, the finite-sample rank is
@@ -99,7 +103,7 @@ k=\min(n,\lceil(n+1)\times0.80\rceil),
 
 and \(q\) is the \(k\)-th ordered score. Bounds are \(L=\max(0,\hat y-q)\) and \(U=\hat y+q\). Fold 1 is calibration burn-in and excluded from interval scoring. Assertions enforce finite values and \(0\le L\le\hat y\le U\).
 
-Coverage is \(H^{-1}\sum 1[L\le y\le U]\). Mean width is \(H^{-1}\sum(U-L)\). Both are reported overall and by pre/crossing/post regime. Overall coverage was 0.882 for both strategies; widths were 26.183 expanding and 23.146 rolling. Crossing-break coverage fell to 0.500 for both, illustrating distribution-shift risk. A native SARIMA 80% interval is also produced, but the comparative interval evaluation uses the sequential LightGBM intervals.
+Coverage is \(H^{-1}\sum 1[L\le y\le U]\). Mean width is \(H^{-1}\sum(U-L)\). Both are calculated with the official course metric functions and reported overall and by pre/crossing/post regime. Overall coverage was 0.882 for both strategies; widths were 26.183 expanding and 23.146 rolling. Crossing-break coverage fell to 0.500 for both, illustrating distribution-shift risk. A native SARIMA 80% interval is also produced, but the comparative interval evaluation uses the sequential LightGBM intervals.
 
 ## 9. Executed results and operational recommendation
 
@@ -109,7 +113,7 @@ Expanding SARIMA is the **challenger**: mean MASE 1.486 (SD 0.651), the best ove
 
 ## 10. Reproducibility and audit
 
-The notebook is Google Colab compatible, installs missing libraries, downloads the immutable source path, seeds Python and NumPy at 42, and configures LightGBM deterministically with one worker. It contains executed outputs from a successful top-to-bottom run. Runtime assertions validate data, folds, forecast length/finiteness, training-only MASE inputs, and interval ordering. The repository intentionally stores no downloaded data or generated charts.
+The notebook is Google Colab compatible, installs missing libraries, downloads the official course source URL and official utility modules into a temporary runtime directory, seeds Python and NumPy at 42, and configures LightGBM deterministically with one worker. It contains executed outputs from a successful top-to-bottom run. Runtime assertions validate data, identical test windows, chronological boundaries, forecast length/finiteness, training-only MASE inputs, and interval ordering. The repository intentionally stores no downloaded data, utility copies, or generated charts.
 
 ## 11. Limitations
 

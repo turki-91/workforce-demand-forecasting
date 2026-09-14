@@ -6,6 +6,8 @@
 **Programme:** Time Series Forecasting for AI Systems – SDAIA Academy<br>
 **Cohort:** September 13–15, 2026
 
+Programme context: [SDAIA Academy on GitHub](https://github.com/SDAIAAcademy).
+
 ## Business problem and motivation
 
 Daily staffing decisions need an accurate 10-day demand forecast, but a level change on **2025-04-01** makes old observations potentially stale. This project measures not just average accuracy, but whether training-window choices and models remain useful before, across, and after that structural change.
@@ -19,9 +21,11 @@ The notebook downloads the [official course dataset](https://raw.githubuserconte
 - Validate schema, daily frequency, chronological order, missingness, duplicates, and finite values.
 - Diagnose trend, seven-day seasonality, the level break, and stationarity with decomposition, ACF/PACF, and ADF tests.
 - Compare a weekly seasonal-naive baseline, training-AIC-selected SARIMA, and LightGBM.
+- Download and import the official course `common/metrics.py` and `common/backtest.py` modules into a temporary runtime directory. Their metric functions score every fold, and `seasonal_naive_forecast` supplies the baseline without adding generated files to the repository.
 - Build LightGBM features from lags 1, 2, 3, 7, 14, 21, 28; shifted-history rolling statistics over 7, 14, 28 days; calendar/cyclic fields; and a time index.
 - Forecast LightGBM recursively: each predicted step enters history for subsequent steps, while test actuals remain inaccessible.
 - Evaluate 12 explicit, chronological 10-day folds with identical test windows under expanding history and a fixed 365-day rolling window. Four folds are pre-break, one crosses the break, and seven are post-break.
+- Retain an explicit-origin walk-forward loop as a justified equivalent to the course harness: the course split helpers generate uniformly spaced terminal folds, whereas this evaluation must hold the same deliberately chosen windows around the structural break constant for both training policies.
 - Calculate MAE, RMSE, MASE (period 7 denominator calculated separately from each fold's training data), and WAPE.
 - Construct nominal 80% sequential split-conformal LightGBM intervals using absolute errors from prior completed folds only. The first fold is calibration burn-in. Native 80% SARIMA intervals are also demonstrated.
 
@@ -69,7 +73,7 @@ The rolling policy is preferred for the champion because discarding stale histor
    jupyter nbconvert --to notebook --execute workforce_demand_forecasting.ipynb \
      --output workforce_demand_forecasting.ipynb --ExecutePreprocessor.timeout=1800
    ```
-3. Internet access is required to install dependencies and download the official CSV. Seeds and single-thread LightGBM fitting make the workflow deterministic.
+3. Internet access is required to install dependencies and download the official CSV plus the two official course utility modules. Seeds and single-thread LightGBM fitting make the workflow deterministic.
 
 ## Limitations
 
