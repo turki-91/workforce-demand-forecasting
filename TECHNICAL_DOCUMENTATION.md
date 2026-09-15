@@ -1,120 +1,165 @@
 # Technical Documentation
 
-## 1. Problem formulation
+## 1. Forecasting problem
 
-Let daily required headcount be \(y_t\). At forecast origin \(t\), each model produces \(\hat y_{t+1:t+10}\), using only information available through \(t\). The evaluation asks how point and interval forecasts behave around the retrospective structural-break date \(b=\) 2025-04-01.
+Let daily required headcount be $y_t$. At forecast origin $t$, a model produces $\hat y_{t+1:t+10}$ using only information available through $t$. The study compares model families and history policies around retrospective break date $b=$ 2025-04-01, then refits the selected policy to forecast the next 10 unknown days.
 
-## 2. Dataset schema and validation
+Business selection uses mean fold MASE as the primary criterion, supported by MAE, RMSE, WAPE, fold variability, regime-specific performance, interval calibration/sharpness, interpretability, history length, compute, and operational complexity.
 
-The official CSV is downloaded at runtime and has two fields:
+## 2. Data and executable validation
 
-| Field | Type used | Meaning |
+The official synthetic `workforce_demand.csv` is downloaded at runtime and contains:
+
+| Field | Runtime type | Validation |
 |---|---|---|
-| `date` | daily `datetime64` index | observation date |
-| `required_headcount` | finite float | target workforce demand |
+| `date` | daily `DatetimeIndex` | Parseable, sorted, unique, no calendar gaps |
+| `required_headcount` | `float` | Numeric, finite, complete, nonnegative |
 
-The executed notebook confirms 731 rows from 2024-01-01 through 2025-12-31, daily inferred frequency, zero missing values, and zero duplicate dates. Assertions enforce the exact schema, strict sorting, one-day spacing, unique dates, completeness, and finite targets before modelling.
+Assertions confirm the exact two-column schema, 731 observations, daily frequency, 2024-01-01 start, 2025-12-31 end, no duplicates, no missing dates/targets, and no infinite or negative targets. Zero and near-zero counts plus descriptive statistics are displayed before modeling.
 
-## 3. Diagnostics
+## 3. Structural change and diagnostics
 
-The analysis provides full-series and regime summaries, weekday/weekend and day-name summaries, an annotated series plot, additive seasonal decomposition with period 7, ACF/PACF through 42 lags, and Augmented Dickey–Fuller tests on levels and first differences. The weekly pattern motivates seasonal period 7. The level/trend break and persistence motivate candidates with regular differencing \(d=1\) and seasonal differencing \(D=1\). Because an ADF result can itself be distorted by a break, the decision combines plots, domain structure, correlation diagnostics, and the test rather than using a p-value mechanically.
+There are 456 pre-break and 275 post-break observations. The pre-break mean/SD are 60.561/18.822; post-break mean/SD are 86.567/26.506. The mean shift is +26.006 headcount (+42.941%). Weekday means rise from 71.782 to 102.574, while weekend means rise from 32.423 to 46.141.
 
-## 4. Models
+The main plot annotates 2025-04-01. Additive decomposition uses period 7, and level ACF/PACF are displayed through lag 42. ADF decisions use $\alpha=0.05$:
 
-### Seasonal naive
+| Series | ADF statistic | p-value | Decision |
+|---|---:|---:|---|
+| Level | -0.5634 | 0.879041 | Fail to reject unit-root null |
+| First difference (`d=1`) | -8.2109 | 6.82×10⁻¹³ | Reject null |
+| Regular + seasonal difference (`d=1,D=1,s=7`) | -9.5546 | 2.52×10⁻¹⁶ | Reject null |
 
-\[
-\hat y_{t+h}=y_{t+h-7}
-\]
+The first difference supports `d=1`. Combined differencing is stationary by ADF, but `d=1` alone already rejects the null, so `D=1` is not justified mechanically. Weekly operations, decomposition/ACF, training AIC, and residual checks support retaining seasonal candidates. ADF does not prove a complete model specification and can be affected by the structural break.
 
-implemented by repeating the final seven training observations for all ten steps.
+## 4. Forecasting models
 
-### SARIMA
+### 4.1 Seasonal Naive
 
-Every fold independently fits this predeclared candidate set:
+The official course implementation repeats the last weekly cycle:
+
+$$\hat y_{t+h}=y_{t+h-7}.$$
+
+It is a transparent, very-low-compute baseline.
+
+### 4.2 SARIMA
+
+Every fold independently evaluates this predeclared grid:
 
 - SARIMA(1,1,1)(1,1,0)[7]
 - SARIMA(2,1,0)(1,1,0)[7]
 - SARIMA(1,1,0)(0,1,1)[7]
 
-The fit with the lowest finite AIC **on that fold's training data** is selected. Fitting uses a constant trend and disables hard stationarity/invertibility enforcement to reduce boundary failures. No test metric participates in selection. The notebook shows selected-model residual ACF and Ljung–Box tests at lags 7 and 14; remaining autocorrelation, when present, is evidence of imperfect specification rather than concealed. Statsmodels' forecast distribution supplies native 80% intervals in the final-origin demonstration.
+Selection uses the lowest finite AIC on the current fold's training history only. The notebook displays order, seasonal order, period, AIC, BIC, convergence, fitting status, captured warning, and safe failure reason for the demonstration fit; it also records selected order/AIC/BIC/convergence for all 24 policy/fold fits. Test metrics never participate in candidate selection.
 
-### LightGBM
+`trend='n'` is used because regular and seasonal differencing make an integrated constant ambiguous. Stationarity/invertibility constraints are not hard-enforced to reduce boundary failures. There is no global warning suppression: expected warnings are captured per candidate, and only `ValueError`, `LinAlgError`, and `RuntimeError` fitting failures are recorded.
 
-The deterministic regressor uses 250 trees, learning rate 0.035, 15 leaves, minimum 20 samples per child, 0.9 row/column subsampling, L2 regularization 0.2, seed 42, and one thread.
+The selected demonstration candidate is SARIMA(1,1,1)(1,1,0)[7]. Residual time plot, ACF, histogram, and Ljung–Box table are displayed. The Ljung–Box null is no residual autocorrelation through the tested lag:
 
-Features at date \(t\):
+- Lag 7: p=0.084520; fail to reject at 0.05.
+- Lag 14: p=0.000077; reject at 0.05.
 
-- target lags \(y_{t-k}\), \(k\in\{1,2,3,7,14,21,28\}\);
+Residuals are therefore not fully white noise; longer-lag dependence remains and the compact specification is imperfect. The notebook also displays a native SARIMA 80% interval table and plot.
+
+### 4.3 LightGBM
+
+The deterministic regressor uses 250 trees, learning rate 0.035, 15 leaves, minimum child size 20, 0.9 row/column subsampling, L2 regularization 0.2, seed 42, and one thread.
+
+Features for target date $t$ are:
+
+- $y_{t-k}$ for $k\in\{1,2,3,7,14,21,28\}$;
 - means and sample standard deviations over the last 7, 14, and 28 historical values;
 - day of week, weekend flag, and month;
 - sine/cosine encodings of day of week and day of year;
-- days since 2024-01-01 as a time trend.
+- deterministic days-since-start index.
 
-Feature importance is split-count predictive importance and has no causal interpretation.
+For each design row, the feature builder receives `values[:i]`, so the current target is excluded. Rolling features operate on this already-shifted history. Split-count feature importance is predictive utility, not causal evidence.
 
-## 5. Leakage prevention and recursive algorithm
+## 5. Recursive multi-step algorithm and leakage controls
 
-Training design rows begin only after 28 historical observations. For a training row at time \(i\), `feature_row(values[:i], date_i, origin)` can access only values strictly before \(i\). Rolling features therefore operate on already-shifted history; neither current \(y_i\) nor future targets are included.
+For each fold:
 
-For a forecast origin:
+1. Copy training targets into `history`.
+2. Fit the model using training rows only.
+3. Create the next date's features from `history`.
+4. Predict and truncate at zero.
+5. Append the prediction—not the hidden test actual—to `history`.
+6. Repeat through the 10-day horizon.
 
-1. Initialize `history` with a copy of the fold's training target only.
-2. Fit LightGBM to leakage-safe training rows.
-3. Build features for the next forecast date from `history`.
-4. predict \(\hat y\), truncate it at zero, and append that **prediction** to `history`.
-5. Repeat steps 3–4 ten times.
+Assertions verify exact forecast dates, unchanged original training history, appended values equal generated predictions, horizon length 10, finiteness, and nonnegativity. Actuals enter only metric calculation after the full recursive path is complete.
 
-Test actuals are passed only to metric computation after the complete forecast has been created. Assertions prove train end precedes test start, each horizon has length 10, and forecasts are finite.
+## 6. Corrected walk-forward design
 
-## 6. Walk-forward split design
+The 12 non-overlapping test starts are:
 
-The 12 test-window start dates are: 2025-02-05, 2025-02-25, 2025-03-10, 2025-03-22, 2025-03-27, 2025-04-06, 2025-05-06, 2025-06-05, 2025-07-05, 2025-08-04, 2025-09-03, and 2025-12-22. Each test window contains the next 10 daily observations.
+```text
+2025-02-05, 2025-02-25, 2025-03-07, 2025-03-17,
+2025-03-27, 2025-04-06, 2025-05-06, 2025-06-05,
+2025-07-05, 2025-08-04, 2025-09-03, 2025-12-22
+```
 
-The notebook downloads and imports the official course `common/backtest.py` at runtime, and its `seasonal_naive_forecast` function generates every baseline forecast. The walk-forward loop itself deliberately retains explicit origins as a justified equivalent to the official harness: the course split helpers place uniformly spaced folds at the end of a series, while this design requires fixed, auditable windows before, across, and after the break. The explicit loop enforces the same core harness contract—fresh training-only fits, chronological non-overlapping train/test boundaries, and fixed horizons—while also asserting that both window strategies receive identical test dates and actuals.
+Every test contains 10 days. This yields four pre-break, one crossing-break, and seven post-break folds. Pairwise assertions require the prior test end to be strictly earlier than the next test start.
 
-The same test dates are used for both strategies:
+- **Expanding:** begins 2024-01-01 and grows through the day before each origin. It offers more evidence and potentially more stable parameters, but old regimes can become stale.
+- **Rolling:** contains exactly the 365 observations immediately before each origin. It can adapt to regime change faster, but estimates may vary more.
 
-- **Expanding:** training always starts 2024-01-01 and ends immediately before the test. It retains long-run evidence and increases effective sample size, which favors parameter stability.
-- **Rolling:** training is exactly the preceding 365 observations. It drops older, potentially stale regimes and may adapt faster, at the cost of less data and more parameter variability.
-
-Four folds are wholly pre-break, the 2025-03-27 fold crosses the break, and seven are wholly post-break. This intentionally stresses the change while maintaining at least 365 training rows. There is no random split.
+The notebook uses the official baseline and metrics modules. Its explicit-origin loop is a justified equivalent to the official split helper because the analysis requires fixed break-centered windows rather than uniformly spaced terminal folds. Executable assertions enforce `train_end < test_start`, horizon 10, minimum/rolling history sizes, non-overlapping tests, fresh fits, and equality of Expanding/Rolling test dates and actuals. A complete 24-row boundary table is displayed.
 
 ## 7. Metrics
 
-For a fold of size \(H=10\):
+For fold horizon $H=10$:
 
-- \(MAE=H^{-1}\sum |y-\hat y|\).
-- \(RMSE=\sqrt{H^{-1}\sum(y-\hat y)^2}\).
-- \(WAPE=100\sum|y-\hat y|/\sum|y|\).
-- \(MASE=MAE/Q\), where \(Q=(n-7)^{-1}\sum_{t=8}^{n}|y_t-y_{t-7}|\).
+$$MAE=\frac{1}{H}\sum|y-\hat y|,$$
 
-Critically, \(Q\) is recomputed using only the current fold's training window—never the full series or test. MASE below 1 means the forecast beats the in-sample weekly-naive scale, not necessarily the out-of-sample baseline on every fold. Results are reported per fold, as mean and standard deviation by strategy/model, and as mean by break regime.
+$$RMSE=\sqrt{\frac{1}{H}\sum(y-\hat y)^2},$$
 
-All six scoring operations are imported from the official course `common/metrics.py` downloaded into a temporary runtime directory: `mae`, `rmse`, `mase`, `wape`, `coverage`, and `interval_width`. The call to `mase` receives the current fold's `train` series explicitly with `seasonal_period=7`; no full-series or test observations enter its denominator.
+$$WAPE=100\frac{\sum|y-\hat y|}{\sum|y|},$$
 
-## 8. Probabilistic intervals
+$$MASE=\frac{MAE}{\frac{1}{n-7}\sum_{t=8}^{n}|y_t-y_{t-7}|}.$$
 
-LightGBM uses sequential symmetric split-conformal intervals at nominal 80% coverage. Before fold \(j>1\), calibration scores are absolute residuals pooled from completed folds \(1,\ldots,j-1\) for the same window strategy. Current-fold outcomes never calibrate their own interval. With \(n\) prior scores, the finite-sample rank is
+All functions come from official `common/metrics.py`. The MASE denominator is recomputed from only the current fold's training series. WAPE is safer than row-wise MAPE if zero/near-zero actuals occur. The executed notebook reports each fold and mean, SD, min, and max for every policy/model, plus regime means.
 
-\[
-k=\min(n,\lceil(n+1)\times0.80\rceil),
-\]
+## 8. Date-aware conformal calibration
 
-and \(q\) is the \(k\)-th ordered score. Bounds are \(L=\max(0,\hat y-q)\) and \(U=\hat y+q\). Fold 1 is calibration burn-in and excluded from interval scoring. Assertions enforce finite values and \(0\le L\le\hat y\le U\).
+For each strategy, LightGBM absolute residual records contain `(residual_date, absolute_residual)`. Before fold origin $o_j$, calibration filters to `residual_date < o_j`; an assertion enforces this time-availability rule. The current fold is appended only after its interval is formed. No current/future actual or global precomputed margin is used.
 
-Coverage is \(H^{-1}\sum 1[L\le y\le U]\). Mean width is \(H^{-1}\sum(U-L)\). Both are calculated with the official course metric functions and reported overall and by pre/crossing/post regime. Overall coverage was 0.882 for both strategies; widths were 26.183 expanding and 23.146 rolling. Crossing-break coverage fell to 0.500 for both, illustrating distribution-shift risk. A native SARIMA 80% interval is also produced, but the comparative interval evaluation uses the sequential LightGBM intervals.
+For $n$ eligible scores and nominal level 0.80:
 
-## 9. Executed results and operational recommendation
+$$k=\min(n,\lceil(n+1)\times0.80\rceil),\qquad q=s_{(k)}.$$
 
-Rolling LightGBM ranked first by the declared primary criterion: mean MASE 1.440 (SD 0.788), with mean MAE 6.391, RMSE 8.014, and WAPE 7.756%. Its post-break mean MASE was 1.143. It is the **champion** under a rolling 365-day policy.
+$$L=\max(0,\hat y-q),\qquad U=\hat y+q.$$
 
-Expanding SARIMA is the **challenger**: mean MASE 1.486 (SD 0.651), the best overall MAE (6.349) and WAPE (7.683%), interpretable dynamics, and native intervals. Weekly seasonal naive is the low-complexity **fallback**. Monitor rolling errors, interval coverage and drift; compare the challenger continuously; recalibrate only after outcomes complete. The crossing-fold degradation means no model should be deployed without alerts and override procedures.
+Fold 1 is burn-in and excluded from interval evaluation. Assertions require date/length alignment, finite values, $L\le\hat y\le U$, and $L\ge0$.
 
-## 10. Reproducibility and audit
+| Strategy | Scored n | Coverage | Mean width |
+|---|---:|---:|---:|
+| Expanding | 110 | 88.18% | 26.311 |
+| Rolling | 110 | 88.18% | 24.054 |
 
-The notebook is Google Colab compatible, installs missing libraries, downloads the official course source URL and official utility modules into a temporary runtime directory, seeds Python and NumPy at 42, and configures LightGBM deterministically with one worker. It contains executed outputs from a successful top-to-bottom run. Runtime assertions validate data, identical test windows, chronological boundaries, forecast length/finiteness, training-only MASE inputs, and interval ordering. The repository intentionally stores no downloaded data, utility copies, or generated charts.
+Both are above nominal overall and Rolling is sharper. Crossing-break coverage is 50% for both, demonstrating calibration risk during abrupt change. Pre/post coverage and widths are shown in the notebook.
 
-## 11. Limitations
+## 9. Corrected results and selection
 
-The data are synthetic; the break date is known retrospectively but could be unknown in production; approximately two annual cycles constrain annual inference; only a 10-day horizon and declared origins are evaluated; headcount forecasting is not workforce scheduling optimization; feature importance is not causal; the compact SARIMA grid is pragmatic rather than exhaustive; and conformal coverage guarantees weaken when abrupt distribution shift violates exchangeability.
+| Rank | Policy/model | Mean MASE | SD MASE | MAE | RMSE | WAPE |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | Rolling SARIMA | 1.4625 | 0.6940 | 6.5315 | 8.2794 | 7.9266% |
+| 2 | Expanding SARIMA | 1.4784 | 0.6328 | 6.3134 | 8.0781 | 7.6896% |
+| 3 | Rolling LightGBM | 1.4888 | 0.7619 | 6.5901 | 8.2520 | 8.0678% |
+| 4 | Rolling Seasonal Naive | 1.5808 | 0.6941 | 7.0500 | 9.1304 | 8.5911% |
+| 5 | Expanding LightGBM | 1.6338 | 0.9030 | 6.9294 | 8.5884 | 8.4299% |
+| 6 | Expanding Seasonal Naive | 1.6524 | 0.6607 | 7.0500 | 9.1304 | 8.5911% |
+
+All mean MASE values exceed 1 and are reported honestly. The champion is **Rolling SARIMA** by the declared primary metric. **Expanding SARIMA** is the challenger: its MASE is only 0.0160 worse, while its variability and other mean errors are better. The champion's approximately 1.1% MASE advantage is small, so it does not justify a more complex family. **Rolling Seasonal Naive** is the low-complexity fallback. Rolling LightGBM is retained as a drift-sensitive benchmark because it has the best post-break MASE (1.1430), despite ranking third overall.
+
+## 10. Final refit and future forecast
+
+Because Rolling SARIMA wins, it is refit on the last 365 observed days. It forecasts 2026-01-01 through 2026-01-10. A conformal half-width of 10.775 is calibrated from the selected policy/model's 120 historical backtest residuals, all observed before 2026-01-01. Bounds are nonnegative. The notebook displays the 10-row table and a plot with recent history, point forecasts, shaded 80% interval, and observed/future boundary. Future actuals and future metrics do not exist and are never fabricated.
+
+## 11. Reproducibility and audit
+
+The notebook installs only missing dependencies, prints Python/Pandas/NumPy/Statsmodels/Scikit-learn/LightGBM versions, downloads course assets into a temporary directory, seeds Python and NumPy at 42, and uses single-thread deterministic LightGBM. A clean isolated execution completed all 15 code cells in order, with captured tables and 11 figures, no error outputs, and no stderr warnings.
+
+The final audit checks data, folds, metrics, interval time availability/order, and future dates. The repository is scanned for secrets, unfinished language, caches, environments, downloaded data, temporary utilities, and generated local artifacts. The notebook ends with an eight-area rubric evidence table covering the seven scored sections plus GitHub/submission requirements.
+
+## 12. Limitations
+
+The data are synthetic; the break is retrospectively known; only about two annual cycles constrain inference; results depend on the declared 10-day origins and compact SARIMA grid; remaining lag-14 residual autocorrelation shows imperfect specification; headcount forecasts are not constrained schedules; feature importance is non-causal; and a new abrupt regime change can weaken both point forecasts and conformal guarantees. Production deployment requires drift monitoring, completed-outcome collection, recalibration, and human oversight.
