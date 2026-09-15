@@ -27,13 +27,17 @@ There are 456 pre-break and 275 post-break observations. Mean headcount increase
 
 - Validate schema, parsing, numeric target, chronological order, daily frequency, calendar completeness, uniqueness, missingness, finiteness, nonnegativity, and zero/near-zero counts.
 - Diagnose trend and weekly seasonality using decomposition, ACF/PACF, and ADF tests on the level, first-differenced, and regular-plus-seasonally-differenced series.
-- Compare the official weekly Seasonal Naive baseline, a compact training-AIC-selected SARIMA grid, and leakage-safe recursive LightGBM.
+- Compare the official weekly Seasonal Naive baseline, a compact convergence-gated training-AIC SARIMA grid, and leakage-safe recursive LightGBM.
 - Import the official course `common/metrics.py` and `common/backtest.py` modules into a temporary runtime directory; do not commit downloaded data or utility copies.
 - Evaluate all models on 12 non-overlapping 10-day folds under Expanding and fixed 365-day Rolling policies. The design has four pre-break folds, one crossing-break fold, and seven post-break folds.
 - Assert that training ends before testing, every test contains exactly 10 dates, pairwise test windows do not overlap, and both policies use identical dates and actuals.
 - Score every fold with official MAE, RMSE, MASE, and WAPE implementations. The MASE scale is recomputed from that fold's training data only.
 - Build nominal 80% sequential conformal LightGBM intervals from residuals whose outcome dates are strictly earlier than the next origin. Fold 1 is calibration burn-in.
 - Demonstrate native SARIMA 80% intervals and create a calibrated 10-day future interval for the selected champion.
+
+### SARIMA convergence reliability
+
+Every SARIMA candidate is fitted first with L-BFGS. A non-converged primary attempt is retried with Nelder–Mead (`method="nm"`, `maxiter=1000`). Only fits with `converged=True` and finite AIC and BIC may enter the AIC selection pool; if no candidate is eligible, execution raises a clear runtime error. The candidate audit retains attempt-specific warnings and failure reasons, while the per-fold selection audit records the accepted optimizer. In the final clean run, all **24/24** scored SARIMA selections converged; all 24 were accepted from L-BFGS, so the fallback was available but was not needed by a selected fit in that run.
 
 ### Leakage controls
 
@@ -107,6 +111,7 @@ Rolling SARIMA is refit on the final 365 observations and forecasts the unknown 
 1. Click **Open in Colab** at the top.
 2. Choose **Runtime → Restart session and run all**.
 3. Confirm all 15 code cells complete in order and the final future table covers 2026-01-01 through 2026-01-10.
+4. Confirm the final runtime audit reports both SARIMA convergence checks as `True`.
 
 ### Local
 

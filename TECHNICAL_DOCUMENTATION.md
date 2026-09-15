@@ -49,9 +49,11 @@ Every fold independently evaluates this predeclared grid:
 - SARIMA(2,1,0)(1,1,0)[7]
 - SARIMA(1,1,0)(0,1,1)[7]
 
-Selection uses the lowest finite AIC on the current fold's training history only. The notebook displays order, seasonal order, period, AIC, BIC, convergence, fitting status, captured warning, and safe failure reason for the demonstration fit; it also records selected order/AIC/BIC/convergence for all 24 policy/fold fits. Test metrics never participate in candidate selection.
+Each candidate is fitted first with the L-BFGS optimizer (`method='lbfgs'`, `maxiter=150`). If that attempt does not converge—or raises one of the explicitly handled fitting errors—the same predeclared candidate is retried with Nelder–Mead (`method='nm'`, `maxiter=1000`). Attempt-specific warnings are captured with optimizer labels. A fit is eligible for the training-only AIC selection pool only when `mle_retvals['converged']` is true and both AIC and BIC are finite. If every candidate is ineligible, execution raises a detailed `RuntimeError`; a non-converged fit can never be selected merely because its AIC is finite.
 
-`trend='n'` is used because regular and seasonal differencing make an integrated constant ambiguous. Stationarity/invertibility constraints are not hard-enforced to reduce boundary failures. There is no global warning suppression: expected warnings are captured per candidate, and only `ValueError`, `LinAlgError`, and `RuntimeError` fitting failures are recorded.
+The notebook's candidate table displays order, seasonal order, period, AIC, BIC, convergence, accepted optimizer, status, captured warnings, and failure reason. The 24-row policy/fold selection audit additionally records the test start and accepted optimizer. The clean final run accepted all **24/24** scored SARIMA selections from L-BFGS; the Nelder–Mead fallback remained active but was not required by a selected fit in that run. Test metrics never participate in candidate selection.
+
+`trend='n'` is used because regular and seasonal differencing make an integrated constant ambiguous. Stationarity/invertibility constraints are not hard-enforced to reduce boundary failures. There is no global warning suppression and no broad silent exception: expected warnings are captured per optimizer attempt, and only `ValueError`, `LinAlgError`, and `RuntimeError` fitting failures are recorded.
 
 The selected demonstration candidate is SARIMA(1,1,1)(1,1,0)[7]. Residual time plot, ACF, histogram, and Ljung–Box table are displayed. The Ljung–Box null is no residual autocorrelation through the tested lag:
 
@@ -152,13 +154,13 @@ All mean MASE values exceed 1 and are reported honestly. The champion is **Rolli
 
 ## 10. Final refit and future forecast
 
-Because Rolling SARIMA wins, it is refit on the last 365 observed days. It forecasts 2026-01-01 through 2026-01-10. A conformal half-width of 10.775 is calibrated from the selected policy/model's 120 historical backtest residuals, all observed before 2026-01-01. Bounds are nonnegative. The notebook displays the 10-row table and a plot with recent history, point forecasts, shaded 80% interval, and observed/future boundary. Future actuals and future metrics do not exist and are never fabricated.
+Because Rolling SARIMA wins, it is refit on the last 365 observed days using the same convergence-gated optimizer policy. It forecasts 2026-01-01 through 2026-01-10. A conformal half-width of 10.775 is calibrated from the selected policy/model's 120 historical backtest residuals, all observed before 2026-01-01. Bounds are nonnegative. The notebook displays the 10-row table and a plot with recent history, point forecasts, shaded 80% interval, and observed/future boundary. Future actuals and future metrics do not exist and are never fabricated.
 
 ## 11. Reproducibility and audit
 
-The notebook installs only missing dependencies, prints Python/Pandas/NumPy/Statsmodels/Scikit-learn/LightGBM versions, downloads course assets into a temporary directory, seeds Python and NumPy at 42, and uses single-thread deterministic LightGBM. A clean isolated execution completed all 15 code cells in order, with captured tables and 11 figures, no error outputs, and no stderr warnings.
+The notebook installs only missing dependencies, prints Python/Pandas/NumPy/Statsmodels/Scikit-learn/LightGBM versions, downloads course assets into a temporary directory, seeds Python and NumPy at 42, and uses single-thread deterministic LightGBM. A clean isolated execution completed all 15 code cells in order in 60.601 seconds, with captured tables and 11 figures, no error outputs, and no stderr warnings. Numeric-only rounding is used for DataFrames that contain datetime columns, fixing the Pandas 3 compatibility warning at its source.
 
-The final audit checks data, folds, metrics, interval time availability/order, and future dates. The repository is scanned for secrets, unfinished language, caches, environments, downloaded data, temporary utilities, and generated local artifacts. The notebook ends with an eight-area rubric evidence table covering the seven scored sections plus GitHub/submission requirements.
+The final audit checks data, folds, metrics, interval time availability/order, future dates, and two explicit SARIMA conditions: `sarima_all_selected_fits_converged` and `no_nonconverged_selected_sarima_fits`. A hard post-backtest assertion also requires `sarima_selections['converged'].all()`. The Classical Model and complete-project rubric statuses are gated by these checks. The repository is scanned for secrets, unfinished language, caches, environments, downloaded data, temporary utilities, and generated local artifacts. The notebook ends with an eight-area rubric evidence table covering the seven scored sections plus GitHub/submission requirements.
 
 ## 12. Limitations
 
